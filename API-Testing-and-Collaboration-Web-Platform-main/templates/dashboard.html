@@ -1,0 +1,714 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – API Testing Platform{% endblock %}
+{% block body %}
+<!-- highlight.js for JSON syntax coloring -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+<header class="dashboard-header">
+  <h1>⚡ API Platform</h1>
+  <nav class="main-nav">
+    <a href="{{ url_for('dashboard') }}" class="active">Dashboard</a>
+    <a href="{{ url_for('analytics_page') }}">Analytics</a>
+    <a href="{{ url_for('notifications_page') }}">Notifications</a>
+  </nav>
+  <div class="header-user">
+    <div style="display:flex; flex-direction:column; align-items:flex-end;">
+      <span class="user-name">{{ user.name }}</span>
+      <span class="user-email">{{ user.email }}</span>
+    </div>
+    <a href="{{ url_for('logout_page') }}" class="btn btn-ghost">Log out</a>
+  </div>
+</header>
+
+<main class="dashboard-main">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <section class="card">
+      <div class="card-head-row">
+        <h2>🗂 Workspace</h2>
+      </div>
+      <select id="workspace-select" aria-label="Select workspace">
+        {% for ws in workspaces %}
+        <option value="{{ ws.id }}">{{ ws.name }}</option>
+        {% endfor %}
+      </select>
+      <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+        <button type="button" id="btn-new-workspace" class="btn btn-small" style="flex:1;">+ New</button>
+        <button type="button" id="btn-export-workspace" class="btn btn-small" style="flex:1;" title="Export workspace as JSON">↓ Export</button>
+      </div>
+    </section>
+
+    <!-- Environment Variables -->
+    <section class="card">
+      <div class="card-head-row" style="cursor:pointer;" id="env-toggle-header">
+        <h2>🌍 Environments</h2>
+        <span id="env-toggle-icon" style="font-size:0.8rem; color:#6c7086;">▸ Show</span>
+      </div>
+      <div id="env-panel" style="display:none;">
+        <div id="env-rows"></div>
+        <button type="button" id="btn-add-env" class="btn btn-small" style="margin-top:0.25rem;">+ Add Variable</button>
+        <p style="font-size:0.75rem; color:#6c7086; margin:0.5rem 0 0;">Use <code style="color:#a6e3a1;">{{var}}</code> in URL, headers, or body</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>📁 Collections</h2>
+      <ul id="collections-list" class="tree"></ul>
+      <button type="button" id="btn-new-collection" class="btn btn-small">+ New collection</button>
+    </section>
+
+    <section class="card">
+      <h2>🔖 Saved requests</h2>
+      <ul id="requests-list" class="tree"></ul>
+      <button type="button" id="btn-save-request" class="btn btn-small btn-primary">Save current</button>
+    </section>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <div class="content">
+    <!-- AI Assistant -->
+    <div class="ai-bar" id="ai-bar">
+      <span style="font-size:1rem;">✨</span>
+      <input type="text" id="ai-prompt" placeholder='Describe your request… e.g. "GET all users from reqres.in"'>
+      <button type="button" id="btn-ai-generate" class="btn-ai">Generate</button>
+    </div>
+
+    <!-- Request Builder -->
+    <section class="card request-runner">
+      <div class="card-head-row">
+        <h2>Request</h2>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <span id="req-status-indicator" style="font-size:0.78rem; color:#6c7086;"></span>
+        </div>
+      </div>
+
+      <div class="form-row url-row-wrap">
+        <label class="method-label">
+          Method
+          <select id="req-method" name="method">
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+        </label>
+        <label class="url-label">
+          URL <span style="font-size:0.75rem; color:#6c7086;">(supports {{env_var}})</span>
+          <input type="text" id="req-url" name="url" placeholder="https://api.example.com/...">
+        </label>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs-nav">
+        <button type="button" class="tab-btn active" data-target="tab-params">Params</button>
+        <button type="button" class="tab-btn" data-target="tab-headers">Headers</button>
+        <button type="button" class="tab-btn" data-target="tab-body">Body</button>
+        <button type="button" class="tab-btn" data-target="tab-code">Code</button>
+      </div>
+
+      <!-- Params Tab -->
+      <div class="tab-content active" id="tab-params">
+        <div id="query-params-container"></div>
+        <button type="button" id="btn-add-param" class="btn btn-small" style="margin-top:0.25rem;">+ Add Param</button>
+      </div>
+
+      <!-- Headers Tab -->
+      <div class="tab-content" id="tab-headers">
+        <textarea id="req-headers" name="headers" rows="4" placeholder='{"Authorization": "Bearer token", "X-Custom": "value"}'></textarea>
+      </div>
+
+      <!-- Body Tab -->
+      <div class="tab-content" id="tab-body">
+        <div style="display:flex; gap:0.5rem; margin-bottom:0.5rem; align-items:center;">
+          <select id="body-type-select" class="btn btn-small" style="margin:0; padding:0.3rem 0.5rem; font-size:0.8rem; background:#11111b; border:1px solid #45475a; color:#cdd6f4; border-radius:6px;">
+            <option value="json">JSON</option>
+            <option value="text">Text</option>
+            <option value="form">Form Data</option>
+          </select>
+          <button type="button" id="btn-format-body" class="btn btn-small">Format JSON</button>
+        </div>
+        <textarea id="req-body" name="body" rows="6" placeholder='{"key": "value"}'></textarea>
+      </div>
+
+      <!-- Code Snippets Tab -->
+      <div class="tab-content" id="tab-code">
+        <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.5rem;">
+          <select id="code-lang-select" style="background:#11111b; border:1px solid #45475a; color:#cdd6f4; padding:0.35rem 0.6rem; border-radius:6px; font-size:0.82rem;">
+            <option value="curl">cURL</option>
+            <option value="fetch">fetch (JavaScript)</option>
+            <option value="python">Python requests</option>
+            <option value="axios">Axios (Node.js)</option>
+          </select>
+          <button type="button" id="btn-copy-code" class="btn btn-small">Copy Code</button>
+        </div>
+        <pre id="code-snippet-pre" style="background:#11111b; padding:1rem; border-radius:8px; color:#a6adc8; overflow:auto; font-family:Consolas,Monaco,monospace; font-size:0.82rem; margin:0; line-height:1.5; border:1px solid #313244; max-height:220px;"></pre>
+      </div>
+
+      <div class="form-actions" style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+        <button type="button" id="btn-send" class="btn btn-primary" style="min-width:140px;">▶ Send Request</button>
+        <kbd style="font-size:0.75rem; color:#6c7086; border:1px solid #313244; border-radius:4px; padding:0.2rem 0.5rem; background:#11111b;">Ctrl+Enter</kbd>
+        <button type="button" id="btn-clear" class="btn btn-ghost btn-small" style="margin-left:auto;">Clear</button>
+      </div>
+    </section>
+
+    <!-- Response Section -->
+    <section class="card response-section">
+      <div class="card-head-row">
+        <h2>Response</h2>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+          <button type="button" id="btn-download-response" class="btn btn-small" title="Download as file">↓ Download</button>
+          <button type="button" id="btn-copy-response" class="btn btn-small" title="Copy to clipboard">Copy</button>
+        </div>
+      </div>
+      <div id="response-meta" class="response-meta"></div>
+      <div id="ai-debug-area"></div>
+      <details class="response-headers-details" id="response-headers-details" hidden>
+        <summary>Response Headers</summary>
+        <pre id="response-headers" class="response-headers"></pre>
+      </details>
+      <pre id="response-body" class="response-body"><code id="response-code" class="language-json"></code></pre>
+
+      <section class="card recent-calls-card">
+        <h3>📊 Recent Calls (24h)</h3>
+        <ul id="recent-calls" class="recent-calls-inline"></ul>
+      </section>
+    </section>
+  </div>
+</main>
+
+<script>
+(function() {
+  /* ================== ELEMENTS ================== */
+  const workspaceSelect = document.getElementById('workspace-select');
+  const collectionsList = document.getElementById('collections-list');
+  const requestsList    = document.getElementById('requests-list');
+  const reqMethod       = document.getElementById('req-method');
+  const reqUrl          = document.getElementById('req-url');
+  const reqHeaders      = document.getElementById('req-headers');
+  const reqBody         = document.getElementById('req-body');
+  const btnSend         = document.getElementById('btn-send');
+  const btnClear        = document.getElementById('btn-clear');
+  const btnSaveRequest  = document.getElementById('btn-save-request');
+  const btnCopyResponse = document.getElementById('btn-copy-response');
+  const btnDownload     = document.getElementById('btn-download-response');
+  const btnExport       = document.getElementById('btn-export-workspace');
+  const responseMeta    = document.getElementById('response-meta');
+  const responseHdrDet  = document.getElementById('response-headers-details');
+  const responseHdrPre  = document.getElementById('response-headers');
+  const responseBody    = document.getElementById('response-body');
+  const responseCode    = document.getElementById('response-code');
+  const recentList      = document.getElementById('recent-calls');
+  const aiPrompt        = document.getElementById('ai-prompt');
+  const btnAiGen        = document.getElementById('btn-ai-generate');
+  const aiDebugArea     = document.getElementById('ai-debug-area');
+  const paramsContainer = document.getElementById('query-params-container');
+  const btnAddParam     = document.getElementById('btn-add-param');
+  const codeSelect      = document.getElementById('code-lang-select');
+  const codePre         = document.getElementById('code-snippet-pre');
+  const btnCopyCode     = document.getElementById('btn-copy-code');
+  const btnFormatBody   = document.getElementById('btn-format-body');
+  let lastStatus = null;
+
+  /* ================== HELPERS ================== */
+  function escapeHtml(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+  function getWorkspaceId() { return workspaceSelect.value||null; }
+
+  async function api(path, options={}) {
+    const r = await fetch(path,{credentials:'include',...options});
+    if (!r.ok && r.status===401) window.location.href='/login';
+    return r;
+  }
+
+  /* ================== ENVIRONMENT VARS ================== */
+  let envVars = {};
+
+  const envToggleHeader = document.getElementById('env-toggle-header');
+  const envPanel = document.getElementById('env-panel');
+  const envToggleIcon = document.getElementById('env-toggle-icon');
+  const envRowsEl = document.getElementById('env-rows');
+  const btnAddEnv = document.getElementById('btn-add-env');
+
+  envToggleHeader.addEventListener('click', () => {
+    const visible = envPanel.style.display !== 'none';
+    envPanel.style.display = visible ? 'none' : 'block';
+    envToggleIcon.textContent = visible ? '▸ Show' : '▾ Hide';
+  });
+
+  function addEnvRow(k='', v='') {
+    const row = document.createElement('div');
+    row.className = 'env-row';
+    row.innerHTML = `
+      <input type="text" class="env-var-key" placeholder="VARIABLE" value="${escapeHtml(k)}">
+      <input type="text" placeholder="value" value="${escapeHtml(v)}">
+      <button class="btn-remove-param" data-env-rm>×</button>
+    `;
+    row.querySelectorAll('input').forEach(i=>i.addEventListener('input', collectEnvVars));
+    row.querySelector('[data-env-rm]').addEventListener('click', ()=>{ row.remove(); collectEnvVars(); });
+    envRowsEl.appendChild(row);
+  }
+
+  function collectEnvVars() {
+    envVars={};
+    envRowsEl.querySelectorAll('.env-row').forEach(r => {
+      const [ki,vi] = r.querySelectorAll('input');
+      if(ki.value.trim()) envVars[ki.value.trim()] = vi.value;
+    });
+  }
+
+  function applyEnvVars(str) {
+    return str.replace(/\{\{(\w+)\}\}/g, function(_, k) {
+      return envVars[k] !== undefined ? envVars[k] : '{{' + k + '}}';
+    });
+  }
+
+  btnAddEnv.addEventListener('click', ()=>addEnvRow());
+  addEnvRow(); // start with one empty row
+
+  /* ================== TABS ================== */
+  document.querySelectorAll('.tab-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(btn.dataset.target).classList.add('active');
+      if(btn.dataset.target==='tab-code') updateCodeSnippet();
+    });
+  });
+
+  /* ================== QUERY PARAMS ================== */
+  function appendParamRow(key='',val='') {
+    const row = document.createElement('div');
+    row.className = 'param-row';
+    row.innerHTML = `
+      <input type="text" placeholder="Key" class="param-key" value="${escapeHtml(key)}">
+      <input type="text" placeholder="Value" class="param-val" value="${escapeHtml(val)}">
+      <button type="button" class="btn-remove-param">×</button>
+    `;
+    row.querySelector('.param-key').addEventListener('input', updateUrlFromParams);
+    row.querySelector('.param-val').addEventListener('input', updateUrlFromParams);
+    row.querySelector('.btn-remove-param').addEventListener('click',()=>{
+      row.remove(); updateUrlFromParams();
+      if(!paramsContainer.children.length) appendParamRow();
+    });
+    paramsContainer.appendChild(row);
+  }
+
+  function updateUrlFromParams() {
+    try {
+      const base = reqUrl.value.split('?')[0];
+      if(!base) return;
+      const safeBase = base.includes('://') ? base : 'https://'+base;
+      const url = new URL(safeBase);
+      url.search='';
+      paramsContainer.querySelectorAll('.param-row').forEach(r=>{
+        const k=r.querySelector('.param-key').value;
+        const v=r.querySelector('.param-val').value;
+        if(k) url.searchParams.append(k,v);
+      });
+      reqUrl.value = base.includes('://') ? url.href : url.href.replace('https://','');
+    } catch{}
+  }
+
+  function syncParamsFromUrl() {
+    try {
+      const urlStr = reqUrl.value.includes('://') ? reqUrl.value : 'https://'+reqUrl.value;
+      const url = new URL(urlStr);
+      paramsContainer.innerHTML='';
+      const entries = Array.from(url.searchParams.entries());
+      if(!entries.length) appendParamRow();
+      else entries.forEach(([k,v])=>appendParamRow(k,v));
+    } catch {
+      if(!paramsContainer.children.length) appendParamRow();
+    }
+  }
+
+  reqUrl.addEventListener('input', syncParamsFromUrl);
+  btnAddParam.addEventListener('click',()=>appendParamRow());
+  appendParamRow(); // initial empty row
+
+  /* ================== FORMAT JSON BODY ================== */
+  btnFormatBody.addEventListener('click',()=>{
+    try {
+      const parsed = JSON.parse(reqBody.value);
+      reqBody.value = JSON.stringify(parsed, null, 2);
+    } catch { reqBody.style.borderColor='#f38ba8'; setTimeout(()=>reqBody.style.borderColor='',1000); }
+  });
+
+  /* ================== CODE SNIPPETS ================== */
+  function getSafeHeaders() {
+    try { return reqHeaders.value.trim() ? JSON.parse(reqHeaders.value) : {}; }
+    catch { return {}; }
+  }
+
+  function updateCodeSnippet() {
+    const lang = codeSelect.value;
+    const method = reqMethod.value;
+    const url = reqUrl.value || 'https://api.example.com/';
+    const body = reqBody.value;
+    const headers = getSafeHeaders();
+    let code = '';
+
+    if(lang==='curl') {
+      code = `curl -X ${method} "${url}"`;
+      for(const [k,v] of Object.entries(headers)) code += ` \\\n  -H "${k}: ${v}"`;
+      if(body && method!=='GET') code += ` \\\n  -H "Content-Type: application/json" \\\n  -d '${body.replace(/'/g,"'\\''")}'`;
+
+    } else if(lang==='fetch') {
+      const opts = {method};
+      if(Object.keys(headers).length) opts.headers=headers;
+      if(body && method!=='GET') {
+        if(!opts.headers) opts.headers={};
+        opts.headers['Content-Type']='application/json';
+        opts.body = '<<BODY>>';
+      }
+      let str = JSON.stringify(opts, null, 2);
+      if(body && method!=='GET') str = str.replace('"<<BODY>>"', `JSON.stringify(${body})`);
+      code = `fetch("${url}", ${str})\n  .then(r => r.json())\n  .then(console.log)\n  .catch(console.error);`;
+
+    } else if(lang==='python') {
+      code = `import requests\n\nurl = "${url}"\n`;
+      if(Object.keys(headers).length) code += `headers = ${JSON.stringify(headers, null,2)}\n`;
+      if(body && method!=='GET') code += `payload = ${body}\n`;
+      code += `\nresponse = requests.${method.toLowerCase()}(url`;
+      if(Object.keys(headers).length) code += `, headers=headers`;
+      if(body && method!=='GET') code += `, json=payload`;
+      code += `)\nprint(response.status_code, response.text)`;
+
+    } else if(lang==='axios') {
+      const config = {method: method.toLowerCase(), url};
+      if(Object.keys(headers).length) config.headers = headers;
+      if(body && method!=='GET') config.data = '<<BODY>>';
+      let str = JSON.stringify(config, null, 2);
+      if(body && method!=='GET') str = str.replace('"<<BODY>>"', body);
+      code = `const axios = require('axios');\n\naxios(${str})\n  .then(res => console.log(res.data))\n  .catch(console.error);`;
+    }
+    codePre.textContent = code;
+  }
+
+  codeSelect.addEventListener('change', updateCodeSnippet);
+  btnCopyCode.addEventListener('click',()=>{
+    navigator.clipboard.writeText(codePre.textContent).then(()=>{
+      btnCopyCode.textContent='Copied!';
+      setTimeout(()=>btnCopyCode.textContent='Copy Code',1500);
+    });
+  });
+
+  /* ================== AI FEATURES ================== */
+  btnAiGen.addEventListener('click', async ()=>{
+    const prompt = aiPrompt.value.trim();
+    if(!prompt) return;
+    btnAiGen.textContent='…';
+    btnAiGen.disabled=true;
+    try {
+      const r = await api('/api/ai/suggest',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({prompt})
+      });
+      const data = await r.json();
+      if(data.error) throw new Error(data.error);
+      reqMethod.value = data.method || 'GET';
+      reqUrl.value    = data.url || '';
+      if(data.headers && Object.keys(data.headers).length) reqHeaders.value = JSON.stringify(data.headers, null, 2);
+      if(data.body) reqBody.value = data.body;
+      syncParamsFromUrl();
+      aiPrompt.value = '';
+    } catch(e) {
+      alert('AI generation failed: ' + e.message);
+    } finally {
+      btnAiGen.textContent = 'Generate';
+      btnAiGen.disabled=false;
+    }
+  });
+
+  aiPrompt.addEventListener('keydown',(e)=>{
+    if(e.key==='Enter') btnAiGen.click();
+  });
+
+  async function showAiDebugSuggestion(statusCode) {
+    aiDebugArea.innerHTML = `<button class="ai-debug-btn" id="ai-debug-trigger">🤖 Ask AI why this failed (${statusCode})</button>`;
+    document.getElementById('ai-debug-trigger').addEventListener('click', async()=>{
+      document.getElementById('ai-debug-trigger').textContent = 'Asking AI…';
+      document.getElementById('ai-debug-trigger').disabled = true;
+      try{
+        const r = await api('/api/ai/debug',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({statusCode, url: reqUrl.value, method: reqMethod.value})
+        });
+        const data = await r.json();
+        aiDebugArea.innerHTML = `<div class="ai-suggestion-box">🤖 <strong>AI Suggestion:</strong> ${escapeHtml(data.suggestion||'No suggestion.')}</div>`;
+      } catch {
+        aiDebugArea.innerHTML = '';
+      }
+    });
+  }
+
+  /* ================== SEND REQUEST ================== */
+  btnSend.addEventListener('click', async ()=>{
+    const method = reqMethod.value;
+    const rawUrl = reqUrl.value.trim();
+    if(!rawUrl) { reqUrl.style.borderColor='#f38ba8'; setTimeout(()=>reqUrl.style.borderColor='',1000); return; }
+    const url = applyEnvVars(rawUrl);
+    let headers = {};
+    try {
+      const rawHdr = applyEnvVars(reqHeaders.value);
+      if(rawHdr.trim()) headers = JSON.parse(rawHdr);
+    } catch {
+      responseMeta.innerHTML='<span class="badge error">Invalid JSON in headers</span>';
+      return;
+    }
+    const rawBody = applyEnvVars(reqBody.value);
+    const payload = {method, url, workspaceId: getWorkspaceId(), headers};
+    if(rawBody.trim() && method!=='GET') payload.body = rawBody;
+
+    btnSend.textContent = '⏳ Sending…';
+    btnSend.disabled = true;
+    responseMeta.innerHTML='<span class="badge sending">Sending…</span>';
+    responseCode.textContent = '';
+    responseCode.removeAttribute('data-highlighted');
+    responseHdrPre.textContent='';
+    responseHdrDet.open=false;
+    aiDebugArea.innerHTML='';
+    lastStatus=null;
+
+    try {
+      const start = performance.now();
+      const r = await api('/api/execute',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json();
+      const clientTime = Math.round(performance.now()-start);
+      lastStatus = data.status;
+
+      const status = data.status!=null ? data.status : (r.ok?200:500);
+      const sc = status>=200&&status<300 ? 'success' : (status>=400?'error':'warn');
+      const rtMs = data.responseTime!=null ? data.responseTime : clientTime;
+
+      responseMeta.innerHTML = `
+        <span class="badge ${sc}">${status} ${escapeHtml(data.statusText||'')}</span>
+        <span class="response-time">${rtMs} ms</span>
+      `;
+
+      if(data.headers && typeof data.headers==='object') {
+        responseHdrPre.textContent = Object.entries(data.headers).map(([k,v])=>k+': '+v).join('\n');
+        responseHdrDet.hidden=false;
+      } else { responseHdrDet.hidden=true; }
+
+      let outStr = '';
+      if(data.error) {
+        outStr = data.error;
+        responseCode.className='language-plaintext';
+      } else {
+        const out = data.data!==undefined ? data.data : data;
+        outStr = typeof out==='object' ? JSON.stringify(out, null, 2) : String(out);
+        responseCode.className='language-json';
+      }
+      responseCode.textContent = outStr;
+      if(window.hljs) { hljs.highlightElement(responseCode); }
+
+      if(status>=400) showAiDebugSuggestion(status);
+      loadRecentCalls();
+    } catch(err) {
+      responseMeta.innerHTML='<span class="badge error">Network Error</span>';
+      responseCode.textContent = err.message;
+      responseCode.className='language-plaintext';
+    } finally {
+      btnSend.textContent='▶ Send Request';
+      btnSend.disabled=false;
+    }
+  });
+
+  /* ================== CLEAR ================== */
+  btnClear.addEventListener('click',()=>{
+    reqUrl.value=''; reqBody.value=''; reqHeaders.value='';
+    responseMeta.innerHTML=''; responseCode.textContent=''; aiDebugArea.innerHTML='';
+    responseHdrDet.hidden=true;
+    paramsContainer.innerHTML=''; appendParamRow();
+  });
+
+  /* ================== COPY / DOWNLOAD RESPONSE ================== */
+  btnCopyResponse.addEventListener('click',()=>{
+    const text = responseCode.textContent;
+    if(!text) return;
+    navigator.clipboard.writeText(text).then(()=>{
+      btnCopyResponse.textContent='Copied!';
+      setTimeout(()=>btnCopyResponse.textContent='Copy',1500);
+    });
+  });
+
+  btnDownload.addEventListener('click',()=>{
+    const text = responseCode.textContent;
+    if(!text) return;
+    const blob = new Blob([text],{type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href=url; a.download=`response_${Date.now()}.json`; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  /* ================== EXPORT WORKSPACE ================== */
+  btnExport.addEventListener('click', async()=>{
+    const wid = getWorkspaceId();
+    if(!wid) return alert('Select a workspace first.');
+    btnExport.textContent='Exporting…';
+    try {
+      const r = await api('/api/requests?workspaceId='+wid);
+      const data = await r.json();
+      const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href=url; a.download=`workspace_${wid}_${new Date().toISOString().slice(0,10)}.json`; a.click();
+      URL.revokeObjectURL(url);
+    } catch { alert('Export failed.'); }
+    finally { btnExport.textContent='↓ Export'; }
+  });
+
+  /* ================== COLLECTIONS & REQUESTS ================== */
+  async function loadCollections() {
+    const wid=getWorkspaceId(); collectionsList.innerHTML='';
+    if(!wid) return;
+    const r = await api('/api/collections?workspaceId='+wid);
+    const data = await r.json();
+    if(data.error) return;
+    if(!data.length) { const li=document.createElement('li'); li.textContent='No collections yet'; li.style.color='#585b70'; li.style.cursor='default'; collectionsList.appendChild(li); return; }
+    data.forEach(c=>{
+      const li=document.createElement('li');
+      li.innerHTML=`<span style="color:#a6e3a1;">📁</span> ${escapeHtml(c.name)}`;
+      li.dataset.id=c._id;
+      collectionsList.appendChild(li);
+    });
+  }
+
+  async function loadRequests() {
+    const wid=getWorkspaceId(); requestsList.innerHTML='';
+    if(!wid) return;
+    const r = await api('/api/requests?workspaceId='+wid);
+    const data = await r.json();
+    if(data.error) return;
+    if(!data.length) { const li=document.createElement('li'); li.textContent='No saved requests'; li.style.color='#585b70'; li.style.cursor='default'; requestsList.appendChild(li); return; }
+    data.forEach(req=>{
+      const li=document.createElement('li');
+      li.className='request-item';
+      li.innerHTML=`
+        <span class="method-pill ${req.method}">${req.method}</span>
+        <span class="request-name" title="Click to load • Double-click to rename">${escapeHtml(req.name)}</span>
+        <button type="button" class="btn-icon btn-delete" title="Delete">×</button>
+      `;
+      li.dataset.id=req._id;
+      li.querySelector('.request-name').addEventListener('click',(e)=>{ if(!e.target.closest('.btn-delete')) loadRequestIntoForm(req); });
+      li.querySelector('.request-name').addEventListener('dblclick',(e)=>{ e.stopPropagation(); renameRequest(req._id,req.name); });
+      li.querySelector('.btn-delete').addEventListener('click',(e)=>{ e.stopPropagation(); deleteRequest(req._id); });
+      requestsList.appendChild(li);
+    });
+  }
+
+  async function deleteRequest(id) {
+    if(!confirm('Delete this request?')) return;
+    await api('/api/requests/'+id,{method:'DELETE'});
+    loadRequests();
+  }
+
+  async function renameRequest(id, currentName) {
+    const name = prompt('New name:',currentName);
+    if(!name||name===currentName) return;
+    await api('/api/requests/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    loadRequests();
+  }
+
+  function loadRequestIntoForm(req) {
+    reqMethod.value = req.method||'GET';
+    reqUrl.value    = req.url||'';
+    reqBody.value   = typeof req.body==='string' ? req.body : (req.body?JSON.stringify(req.body,null,2):'');
+    reqHeaders.value = req.headers&&typeof req.headers==='object' ? JSON.stringify(req.headers,null,2) : '';
+    syncParamsFromUrl();
+  }
+
+  /* ================== SAVE REQUEST ================== */
+  btnSaveRequest.addEventListener('click', async()=>{
+    const wid=getWorkspaceId();
+    if(!wid) { alert('Select a workspace first.'); return; }
+    const name = prompt('Request name:',reqUrl.value.replace(/^https?:\/\//,'').slice(0,40)||'Untitled');
+    if(!name) return;
+    try {
+      const r = await api('/api/requests',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          workspaceId:wid, name,
+          method:reqMethod.value,
+          url:reqUrl.value.trim(),
+          headers: reqHeaders.value.trim()?JSON.parse(reqHeaders.value):{},
+          body:reqBody.value, bodyType:'json'
+        })
+      });
+      const data = await r.json();
+      if(data.error) { alert(data.error); return; }
+      loadRequests();
+    } catch(e) { alert('Failed to save: '+e.message); }
+  });
+
+  /* ================== NEW COLLECTION / WORKSPACE ================== */
+  document.getElementById('btn-new-collection').addEventListener('click', async()=>{
+    const wid=getWorkspaceId();
+    if(!wid) { alert('Select a workspace first.'); return; }
+    const name=prompt('Collection name:','New Collection');
+    if(!name) return;
+    const r=await api('/api/collections',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({workspaceId:wid,name})});
+    const data=await r.json();
+    if(!data.error) loadCollections();
+  });
+
+  document.getElementById('btn-new-workspace').addEventListener('click', async()=>{
+    const name=prompt('Workspace name:','New Workspace');
+    if(!name) return;
+    const r=await api('/api/workspaces',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    const data=await r.json();
+    if(!data.error){
+      const opt=document.createElement('option');
+      opt.value=data._id; opt.textContent=data.name;
+      workspaceSelect.appendChild(opt);
+      workspaceSelect.value=data._id;
+      loadCollections(); loadRequests();
+    }
+  });
+
+  /* ================== RECENT CALLS ================== */
+  async function loadRecentCalls() {
+    const q = getWorkspaceId() ? '?workspaceId='+getWorkspaceId() : '';
+    const r = await api('/api/analytics'+q);
+    const data = await r.json();
+    recentList.innerHTML='';
+    if(!(data.recent||[]).length) {
+      const li=document.createElement('li'); li.textContent='No recent calls.'; li.style.color='#585b70'; recentList.appendChild(li); return;
+    }
+    (data.recent||[]).slice(0,10).forEach(c=>{
+      const li=document.createElement('li');
+      const sc=c.status>=200&&c.status<300?'success':(c.status>=400?'error':'warn');
+      li.innerHTML=`<span class="method-pill ${c.method}">${c.method}</span> <span class="badge ${sc}">${c.status}</span> <span class="recent-url" title="${escapeHtml(c.url)}">${escapeHtml(c.url.length>55?c.url.slice(0,55)+'…':c.url)}</span> <span class="recent-time">${c.responseTime} ms</span>`;
+      li.style.cursor='pointer';
+      li.addEventListener('click',()=>{ reqMethod.value=c.method; reqUrl.value=c.url; syncParamsFromUrl(); });
+      recentList.appendChild(li);
+    });
+  }
+
+  /* ================== KEYBOARD SHORTCUT ================== */
+  document.addEventListener('keydown',(e)=>{
+    if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); btnSend.click(); }
+  });
+
+  /* ================== WORKSPACE CHANGE ================== */
+  workspaceSelect.addEventListener('change',()=>{ loadCollections(); loadRequests(); });
+
+  /* ================== INIT ================== */
+  loadCollections();
+  loadRequests();
+  loadRecentCalls();
+  syncParamsFromUrl();
+})();
+</script>
+{% endblock %}
